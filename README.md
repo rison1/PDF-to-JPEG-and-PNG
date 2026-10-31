@@ -1,0 +1,1 @@
+HTML5 standalone PDF → JPEG and PDF → PNG Rendered at higher resolution, downscaled, saved as JPEG with full 4:4:4 color or transparent PNG. Example: 1200 × 1200 pt → rendered at 4800 × 4800 px (288 dpi) → downscaled to 1200 × 1200 px (72 dpi) → JPEG 95%, 4:4:4
