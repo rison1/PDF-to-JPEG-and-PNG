@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF to JPEG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one working column – settings, size math, progress, results as a contact sheet */
+:root{
+  --bg:#eef0f2; --panel:#ffffff; --fg:#1b1f24; --muted:#5d6670; --line:#d5dade;
+  --accent:#c2185b; --accent-fg:#ffffff; --ok:#2e7d4f; --warn:#b45309; --bad:#c62828;
+  --font-ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#16191d; --panel:#1f2328; --fg:#e7eaee; --muted:#9aa3ad; --line:#30363d;
+  --accent:#ec5f94; --accent-fg:#16191d; --ok:#5fbf86; --warn:#e3a33b; --bad:#f07171;
+  color-scheme:dark;
+}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--font-ui);padding:32px 16px 64px}
+.wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-size:26px;font-weight:600;margin:0;letter-spacing:-.01em}
+h1 span{color:var(--accent)}
+h1 span.t{color:inherit}
+.sub{color:var(--muted);margin:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+button{font:inherit;font-weight:500;border-radius:8px;padding:10px 18px;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--fg)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input:disabled,select:disabled{cursor:not-allowed;color:var(--muted)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.runrow{align-items:flex-end}
+.runrow button{padding-block:8px}
+.outlabel{width:200px;max-width:100%}
+.folder{font-family:var(--font-mono);font-size:13px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin-top:18px}
+label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+input,select{font:15px var(--font-mono);text-transform:none;letter-spacing:0;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;width:100%}
+.math{margin-top:18px;font-family:var(--font-mono);font-size:13px;color:var(--muted);overflow-x:auto;white-space:nowrap}
+.math b{color:var(--fg);font-weight:500}
+.files{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-family:var(--font-mono);font-size:13px}
+.files li{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding-top:6px}
+.files li span:first-child{min-width:0;overflow-wrap:anywhere}
+.files .st{color:var(--muted);white-space:nowrap}
+.files .st.ok{color:var(--ok)} .files .st.err{color:var(--bad)}
+progress{width:100%;height:8px;accent-color:var(--accent)}
+.status{font-size:14px;color:var(--muted);margin:8px 0 0}
+.sheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+.thumb{display:flex;flex-direction:column;gap:6px;min-width:0}
+.thumb .img{background:repeating-conic-gradient(var(--line) 0 25%,transparent 0 50%) 0 0/14px 14px;border:1px solid var(--line);border-radius:6px;aspect-ratio:1;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.thumb img{max-width:100%;max-height:100%;display:block}
+.thumb .n{font-family:var(--font-mono);font-size:12px;overflow-wrap:anywhere}
+.thumb .m{font-family:var(--font-mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;margin-left:4px}
+.badge.ok{color:var(--ok);border:1px solid var(--ok)} .badge.bad{color:var(--bad);border:1px solid var(--bad)}
+.note{font-size:13px;color:var(--muted);margin:0}
+.warnbox{color:var(--warn);font-size:14px;margin:0}
+h2{font-size:15px;font-weight:600;margin:0 0 12px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>PDF <span>→</span> <span id="fmtTitle" class="t">JPEG</span></h1>
+    <p class="sub" id="subTitle">Rendered at higher resolution, downscaled, saved as JPEG with full 4:4:4 color</p>
+  </header>
+
+  <section class="panel">
+    <div class="row">
+      <button id="pick" class="primary">Choose PDF folder</button>
+      <button id="reuse" hidden>Use last PDF folder</button>
+      <span id="folder" class="folder">No folder selected</span>
+    </div>
+    <input id="dirInput" type="file" webkitdirectory multiple accept="application/pdf" hidden>
+    <ul id="files" class="files"></ul>
+    <p id="modeNote" class="warnbox" hidden></p>
+  </section>
+
+  <section class="panel">
+    <h2>Settings</h2>
+    <div class="grid">
+      <label for="fmtSel">Format
+        <select id="fmtSel"><option value="jpg" selected>JPEG</option><option value="png">PNG</option></select>
+      </label>
+      <label for="dpi">Output DPI<input id="dpi" type="number" min="10" max="1200" step="1" value="72"></label>
+      <label for="ss">Supersampling
+        <select id="ss"><option value="1">1× (off)</option><option value="2">2×</option><option value="3">3×</option><option value="4" selected>4×</option><option value="6">6×</option></select>
+      </label>
+      <label for="filter">Interpolation
+        <select id="filter"><option value="lanczos3">Lanczos 3</option><option value="lanczos2">Lanczos 2</option><option value="mks2013">MKS 2013 (sharper)</option><option value="hamming" selected>Hamming (softer)</option></select>
+      </label>
+      <label for="sharp">Sharpening
+        <select id="sharp"><option value="0">None</option><option value="1" selected>Light</option><option value="2">Medium</option><option value="3">Strong</option></select>
+      </label>
+      <label for="quality">JPEG quality (%)<input id="quality" type="number" min="1" max="100" step="1" value="95"></label>
+    </div>
+    <div id="math" class="math"></div>
+  </section>
+
+  <section class="panel">
+    <div class="row runrow">
+      <label for="outName" class="outlabel">Subfolder<input id="outName" type="text" value="JPG"></label>
+      <button id="run" class="primary" disabled>Convert</button>
+      <button id="zipBtn" hidden>Download ZIP</button>
+    </div>
+    <progress id="prog" value="0" max="1" hidden></progress>
+    <p id="status" class="status">Choose a folder and click Convert.</p>
+  </section>
+
+  <section class="panel" id="resultsPanel" hidden>
+    <h2>Results</h2>
+    <div id="sheet" class="sheet"></div>
+  </section>
+
+  <p class="note">If the PDF name contains a size limit (e.g. <code>_50kB_</code>), the app lowers JPEG quality as needed so the file fits (1 kB = 1000 bytes). DPI is written into both JPEG and PNG, so Photoshop shows it correctly. PNG is transparent only where the PDF has no background.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pica/9.0.1/pica.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jpeg-js@0.4.4/lib/encoder.js"></script>
+<script>
+(() => {
+  const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const $ = id => document.getElementById(id);
+  const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
+  const MAX_PX = isSafari ? 16_000_000 : 150_000_000;
+  const SHARP = [null, {a:50,r:0.5,t:2}, {a:90,r:0.6,t:2}, {a:150,r:0.7,t:1}];
+
+  // pdf.js worker via blob so it also works when the file is opened from disk
+  try {
+    const blobUrl = URL.createObjectURL(new Blob([`importScripts(${JSON.stringify(PDFJS_WORKER)});`], {type:"text/javascript"}));
+    pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(blobUrl);
+  } catch (e) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  }
+  const picaInst = window.pica ? window.pica() : null;
+
+  let mode = null;       // "fs" = write to folder, "zip" = download
+  let dirHandle = null;
+  let pdfFiles = [];     // {name, file?, handle?}
+  let zip = null, zipUrl = null;
+  let firstPageSize = null;
+
+  // saved settings
+  const fields = ["dpi","quality","ss","filter","sharp","outName"];
+  try { const s = JSON.parse(localStorage.getItem("pdf2jpg_en_v1") || "{}"); fields.forEach(f => { if (s[f] != null) $(f).value = s[f]; }); } catch (e) {}
+  const saveSettings = () => { try { const s = {}; fields.forEach(f => s[f] = $(f).value); localStorage.setItem("pdf2jpg_en_v1", JSON.stringify(s)); } catch (e) {} };
+  fields.forEach(f => $(f).addEventListener("input", () => { saveSettings(); updateMath(); }));
+
+  // on format change, switch the default subfolder name and hide quality for PNG
+  function syncFormatUI() {
+    const png = $("fmtSel").value === "png";
+    $("quality").disabled = png; $("quality").closest("label").hidden = png;
+    $("fmtTitle").textContent = png ? "PNG" : "JPEG";
+    document.title = png ? "PDF to PNG" : "PDF to JPEG";
+    $("subTitle").textContent = png ? "PNG will be transparent wherever the PDF has no background" : "Rendered at higher resolution, downscaled, saved as JPEG with full 4:4:4 color";
+  }
+  $("fmtSel").addEventListener("change", () => {
+    const o = $("outName");
+    if ($("fmtSel").value === "png" && o.value === "JPG") o.value = "PNG";
+    if ($("fmtSel").value === "jpg" && o.value === "PNG") o.value = "JPG";
+    syncFormatUI(); saveSettings(); updateMath();
+  });
+  // always start on JPEG; if the saved subfolder is "PNG", reset it to "JPG"
+  $("fmtSel").value = "jpg";
+  if ($("outName").value === "PNG") $("outName").value = "JPG";
+  syncFormatUI();
+
+  function settings() {
+    return {
+      png: $("fmtSel").value === "png",
+      dpi: Math.max(10, +$("dpi").value || 72),
+      q: Math.min(100, Math.max(1, +$("quality").value || 95)),
+      ss: +$("ss").value || 1,
+      filter: $("filter").value,
+      sharp: SHARP[+$("sharp").value],
+      out: ($("outName").value || "JPG").replace(/[\/\\:]/g, "_")
+    };
+  }
+
+  function updateMath() {
+    const s = settings();
+    const w = firstPageSize ? firstPageSize[0] : 1200, h = firstPageSize ? firstPageSize[1] : 1200;
+    const tw = Math.round(w * s.dpi / 72), th = Math.round(h * s.dpi / 72);
+    const bw = tw * s.ss, bh = th * s.ss;
+    $("math").innerHTML = `${firstPageSize ? "First page" : "Example"}: <b>${fmt(w)} × ${fmt(h)} pt</b> → rendered at <b>${bw} × ${bh} px</b> (${s.dpi * s.ss} dpi) → downscaled to <b>${tw} × ${th} px</b> (${s.dpi} dpi) → <b>${s.png ? "PNG with transparency" : `JPEG ${s.q}%, 4:4:4`}</b>`;
+  }
+  const fmt = n => Math.round(n * 100) / 100;
+
+  function renderFileList() {
+    $("files").innerHTML = pdfFiles.map((f, i) => `<li><span>${esc(f.name)}</span><span class="st" id="st${i}">waiting</span></li>`).join("");
+    $("run").disabled = pdfFiles.length === 0;
+  }
+  const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const isPdf = n => /\.pdf$/i.test(n) && !n.startsWith("._");
+
+  async function readFirstPageSize() {
+    firstPageSize = null;
+    if (!pdfFiles.length) return updateMath();
+    try {
+      const file = await getFile(pdfFiles[0]);
+      // pdf.js needs the whole file; skip the size preview for very large files
+      if (file.size > 60 * 1024 * 1024) return updateMath();
+      const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer(), isEvalSupported:false}).promise;
+      const p = await pdf.getPage(1); const vp = p.getViewport({scale:1});
+      firstPageSize = [vp.width, vp.height]; pdf.destroy();
+    } catch (e) {}
+    updateMath();
+  }
+
+  async function getFile(f) { return f.file || await f.handle.getFile(); }
+
+  // remember the last folder (IndexedDB, Chrome/Edge)
+  function idbOpen() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open("pdf2jpg", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("kv");
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  }
+  async function idbSet(k, v) {
+    const db = await idbOpen();
+    return new Promise((res, rej) => { const t = db.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); });
+  }
+  async function idbGet(k) {
+    const db = await idbOpen();
+    return new Promise((res, rej) => { const r = db.transaction("kv").objectStore("kv").get(k); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  }
+
+  let lastHandle = null;
+  (async () => {
+    try {
+      if (!window.showDirectoryPicker) return;
+      lastHandle = await idbGet("lastDir");
+      if (lastHandle) { $("reuse").title = lastHandle.name; $("reuse").hidden = false; }
+    } catch (e) {}
+  })();
+
+  async function loadDir(handle) {
+    dirHandle = handle;
+    pdfFiles = [];
+    for await (const [name, h] of dirHandle.entries()) if (h.kind === "file" && isPdf(name)) pdfFiles.push({name, handle:h});
+    pdfFiles.sort((a,b) => a.name.localeCompare(b.name, "en", {numeric:true}));
+    mode = "fs";
+    $("folder").textContent = `${dirHandle.name}/  ·  ${pdfFiles.length} PDF  ·  output to "${settings().out}"`;
+    $("modeNote").hidden = true;
+    renderFileList(); readFirstPageSize();
+    try { await idbSet("lastDir", handle); lastHandle = handle; $("reuse").title = handle.name; $("reuse").hidden = false; } catch (e) {}
+  }
+
+  // folder selection
+  $("pick").addEventListener("click", async () => {
+    if (window.showDirectoryPicker) {
+      try {
+        const opts = {mode:"readwrite", id:"pdf2jpg"};
+        if (lastHandle) opts.startIn = lastHandle;
+        await loadDir(await window.showDirectoryPicker(opts));
+        return;
+      } catch (e) {
+        if (e.name === "AbortError") return;
+      }
+    }
+    $("dirInput").click();
+  });
+
+  $("reuse").addEventListener("click", async () => {
+    if (!lastHandle) return;
+    try {
+      let perm = await lastHandle.queryPermission({mode:"readwrite"});
+      if (perm !== "granted") perm = await lastHandle.requestPermission({mode:"readwrite"});
+      if (perm !== "granted") { $("status").textContent = "Without permission the app cannot write to the folder. Allow access or choose the folder again."; return; }
+      await loadDir(lastHandle);
+    } catch (e) {
+      $("status").textContent = "The last folder can't be opened (it may have been moved or renamed). Choose it again.";
+      $("reuse").hidden = true; lastHandle = null;
+    }
+  });
+
+  $("dirInput").addEventListener("change", e => {
+    const list = [...e.target.files].filter(f => isPdf(f.name) && f.webkitRelativePath.split("/").length <= 2);
+    pdfFiles = list.map(f => ({name:f.name, file:f})).sort((a,b) => a.name.localeCompare(b.name, "en", {numeric:true}));
+    mode = "zip"; dirHandle = null;
+    const folder = list[0] ? list[0].webkitRelativePath.split("/")[0] : "";
+    $("folder").textContent = `${folder}/  ·  ${pdfFiles.length} PDF`;
+    $("modeNote").textContent = "This browser can't write directly to a folder. You'll download the images as a ZIP. To write directly, open the app in Chrome or Edge.";
+    $("modeNote").hidden = false;
+    renderFileList(); readFirstPageSize();
+  });
+
+  // write DPI into the JFIF header
+  async function setJfifDpi(blob, dpi) {
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF && buf[3] === 0xE0 &&
+        buf[6] === 0x4A && buf[7] === 0x46 && buf[8] === 0x49 && buf[9] === 0x46 && buf[10] === 0) {
+      buf[13] = 1; buf[14] = dpi >> 8; buf[15] = dpi & 255; buf[16] = dpi >> 8; buf[17] = dpi & 255;
+    }
+    return new Blob([buf], {type:"image/jpeg"});
+  }
+
+  // PNG: write DPI via a pHYs chunk right after IHDR
+  const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  async function encodePng(canvas, dpi) {
+    const blob = await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error("Could not create PNG")), "image/png"));
+    const src = new Uint8Array(await blob.arrayBuffer());
+    if (!(src[12] === 0x49 && src[13] === 0x48 && src[14] === 0x44 && src[15] === 0x52)) return blob;
+    const ppm = Math.round(dpi / 0.0254);
+    const chunk = new Uint8Array(21); const dv = new DataView(chunk.buffer);
+    dv.setUint32(0, 9); chunk.set([0x70, 0x48, 0x59, 0x73], 4); // "pHYs"
+    dv.setUint32(8, ppm); dv.setUint32(12, ppm); chunk[16] = 1;
+    dv.setUint32(17, crc32(chunk.subarray(4, 17)));
+    const at = 33; // 8 bajtov podpis + 25 bajtov IHDR
+    const outBytes = new Uint8Array(src.length + 21);
+    outBytes.set(src.subarray(0, at), 0); outBytes.set(chunk, at); outBytes.set(src.subarray(at), at + 21);
+    return new Blob([outBytes], {type:"image/png"});
+  }
+
+  // JPEG 4:4:4 (no chroma subsampling) via jpeg-js; falls back to Chrome 4:2:0 if the library fails to load
+  let used420 = false;
+  async function encodeJpeg(canvas, q, imgData) {
+    const enc = window["jpeg-js"] && window["jpeg-js"].encode;
+    if (enc) {
+      const id = imgData || canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+      const r = enc({data:id.data, width:id.width, height:id.height}, q);
+      return new Blob([r.data], {type:"image/jpeg"});
+    }
+    used420 = true;
+    return picaInst.toBlob(canvas, "image/jpeg", q / 100);
+  }
+
+  // with a size limit in the name, find the highest quality (≤ set value) that fits
+  const MIN_Q = 10;
+  async function encodeWithLimit(canvas, q, limitKB) {
+    let imgData = null;
+    try { imgData = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height); } catch (e) {}
+    const first = await encodeJpeg(canvas, q, imgData);
+    if (!limitKB || first.size <= limitKB * 1000) return {blob:first, q, fits:true};
+    let lo = MIN_Q, hi = q - 1, best = null, bestQ = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const b = await encodeJpeg(canvas, mid, imgData);
+      if (b.size <= limitKB * 1000) { best = b; bestQ = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    if (best) return {blob:best, q:bestQ, fits:true};
+    return {blob: await encodeJpeg(canvas, MIN_Q, imgData), q:MIN_Q, fits:false};
+  }
+
+  function sizeLimitKB(name) { const m = name.match(/(\d+)\s*kb/i); return m ? +m[1] : null; }
+
+  async function writeOut(outDir, name, blob) {
+    if (mode === "fs") {
+      const fh = await outDir.getFileHandle(name, {create:true});
+      const w = await fh.createWritable(); await w.write(blob); await w.close();
+    } else {
+      zip.file(name, blob);
+    }
+  }
+
+  function addThumb(name, blob, w, h, limit, q, qSet) {
+    const kb = blob.size / 1000;
+    let badge = "";
+    if (limit) badge = kb <= limit ? `<span class="badge ok">≤ ${limit} kB</span>` : `<span class="badge bad">over ${limit} kB</span>`;
+    const qInfo = q == null ? "" : q < qSet ? ` · quality lowered to ${q}` : ` · quality ${q}`;
+    const el = document.createElement("div"); el.className = "thumb";
+    el.innerHTML = `<div class="img"><img alt="${esc(name)}"></div><div class="n">${esc(name)}</div><div class="m">${w} × ${h} px · ${kb.toFixed(1)} kB${badge}${qInfo}</div>`;
+    el.querySelector("img").src = URL.createObjectURL(blob);
+    $("sheet").appendChild(el);
+  }
+
+  $("run").addEventListener("click", async () => {
+    if (!pdfFiles.length) return;
+    if (!picaInst) { $("status").textContent = "Libraries failed to load. Check your internet connection and reload the page."; return; }
+    const s = settings();
+    $("run").disabled = $("pick").disabled = $("reuse").disabled = true;
+    $("zipBtn").hidden = true;
+    if (zipUrl) { URL.revokeObjectURL(zipUrl); zipUrl = null; }
+    $("sheet").querySelectorAll("img").forEach(i => URL.revokeObjectURL(i.src));
+    $("sheet").innerHTML = ""; $("resultsPanel").hidden = false;
+    $("prog").hidden = false; $("prog").value = 0;
+    zip = mode === "zip" ? new JSZip() : null;
+
+    let outDir = null;
+    try { if (mode === "fs") outDir = await dirHandle.getDirectoryHandle(s.out, {create:true}); }
+    catch (e) { $("status").textContent = "Cannot write to the folder: " + e.message; $("run").disabled = $("pick").disabled = $("reuse").disabled = false; return; }
+
+    let done = 0, total = 0, errors = 0, reduced = false, overLimit = 0;
+    used420 = false;
+    const t0 = performance.now();
+
+    for (let i = 0; i < pdfFiles.length; i++) {
+      const f = pdfFiles[i], st = $("st" + i);
+      st.className = "st"; st.textContent = "loading…";
+      let pdf = null;
+      try {
+        const file = await getFile(f);
+        pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer(), isEvalSupported:false}).promise;
+        const n = pdf.numPages; total += n;
+        const pad = String(n).length;
+        const base = f.name.replace(/\.pdf$/i, "");
+        const limit = sizeLimitKB(f.name);
+        for (let p = 1; p <= n; p++) {
+          st.textContent = `page ${p}/${n}`;
+          $("status").textContent = `${f.name} · page ${p} of ${n}`;
+          const page = await pdf.getPage(p);
+          const base1 = page.getViewport({scale: s.dpi / 72});
+          const tw = Math.round(base1.width), th = Math.round(base1.height);
+          let factor = s.ss;
+          while (factor > 1 && tw * factor * th * factor > MAX_PX) { factor -= 0.5; reduced = true; }
+          const vp = page.getViewport({scale: s.dpi / 72 * factor});
+          const big = document.createElement("canvas");
+          big.width = Math.round(vp.width); big.height = Math.round(vp.height);
+          let ctx;
+          if (s.png) {
+            ctx = big.getContext("2d"); // transparent background
+            await page.render({canvasContext:ctx, viewport:vp, background:"rgba(0,0,0,0)"}).promise;
+          } else {
+            ctx = big.getContext("2d", {alpha:false});
+            ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, big.width, big.height);
+            await page.render({canvasContext:ctx, viewport:vp, background:"rgb(255,255,255)"}).promise;
+          }
+
+          const out = document.createElement("canvas"); out.width = tw; out.height = th;
+          const opts = {filter: s.filter};
+          if (s.sharp) { opts.unsharpAmount = s.sharp.a; opts.unsharpRadius = s.sharp.r; opts.unsharpThreshold = s.sharp.t; }
+          await picaInst.resize(big, out, opts);
+          let blob, usedQ = null;
+          if (s.png) {
+            blob = await encodePng(out, s.dpi);
+            if (limit && blob.size > limit * 1000) overLimit++;
+          } else {
+            const enc = await encodeWithLimit(out, s.q, limit);
+            if (!enc.fits) overLimit++;
+            usedQ = enc.q;
+            blob = await setJfifDpi(enc.blob, s.dpi);
+          }
+          big.width = big.height = 0; page.cleanup();
+
+          const ext = s.png ? "png" : "jpg";
+          const name = n === 1 ? `${base}.${ext}` : `${base}-${String(p).padStart(pad, "0")}.${ext}`;
+          await writeOut(outDir, name, blob);
+          addThumb(name, blob, tw, th, limit, usedQ, s.q);
+          done++;
+          $("prog").value = (i + p / n) / pdfFiles.length;
+        }
+        st.className = "st ok"; st.textContent = `done · ${n} ${n === 1 ? "page" : "pages"}`;
+      } catch (e) {
+        errors++; st.className = "st err"; st.textContent = "error";
+        console.error(f.name, e);
+        $("status").textContent = `${f.name}: ${e && e.message ? e.message : e}`;
+      } finally {
+        if (pdf) pdf.destroy();
+      }
+    }
+
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    const kind = s.png ? "PNG" : "JPEG";
+    let msg = `Done: ${done} ${kind} in ${secs} s` + (mode === "fs" ? ` · saved to "${dirHandle.name}/${s.out}"` : "");
+    if (errors) msg += ` · ${errors} ${errors === 1 ? "file" : "files"} failed to convert`;
+    if (overLimit) msg += s.png ? ` · ${overLimit} PNG over the limit (PNG can't be shrunk by lowering quality, use JPEG)` : ` · ${overLimit} JPEG don't fit the limit even at quality ${MIN_Q}`;
+    if (used420) msg += " · the 4:4:4 encoder failed to load, JPEGs were saved as 4:2:0 (check internet and reload)";
+    if (reduced) msg += " · supersampling was reduced on some pages to avoid running out of browser memory";
+    $("status").textContent = msg;
+    $("prog").value = 1;
+
+    if (mode === "zip" && done) {
+      $("status").textContent = msg + " · preparing ZIP…";
+      const zb = await zip.generateAsync({type:"blob", compression:"STORE"});
+      zipUrl = URL.createObjectURL(zb);
+      $("zipBtn").hidden = false;
+      $("status").textContent = msg;
+    }
+    $("run").disabled = $("pick").disabled = $("reuse").disabled = false;
+  });
+
+  $("zipBtn").addEventListener("click", () => {
+    if (!zipUrl) return;
+    const a = document.createElement("a"); a.href = zipUrl; a.download = `${settings().out}.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+
+  updateMath();
+})();
+</script>
+</body>
+</html>
